@@ -3,9 +3,32 @@ on:
   push:
     branches: [ "main", "master" ]
 jobs:
+  # STAGE 1: Secrets Scanning
+  secrets-analysis:
+    name: "Gitleaks Secrets Scan"
+    runs-on: self-hosted
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Run Gitleaks
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/path" zricethezav/gitleaks:latest detect --source="/path" --report-path="/path/gitleaks_results.json" || true
+      - name: Push Secrets to DefectDojo
+        run: |
+          curl -X POST "http://localhost:8080/api/v2/import-scan/" \
+          -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+          -F "scan_date=$(date +%Y-%m-%d)" \
+          -F "scan_type=Gitleaks Scan" \
+          -F "engagement=1" \
+          -F "file=@gitleaks_results.json"
+
+  # STAGE 2: Code Vulnerability Scan
   static-analysis:
     name: "Semgrep Code Scan"
     runs-on: self-hosted
+    needs: secrets-analysis
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -20,10 +43,63 @@ jobs:
           -F "scan_type=Semgrep JSON Report" \
           -F "engagement=1" \
           -F "file=@semgrep_results.json"
+
+  # STAGE 3: Infrastructure Linting
+  infra-lint:
+    name: "Hadolint Dockerfile Scan"
+    runs-on: self-hosted
+    needs: static-analysis
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+      - name: Run Hadolint
+        run: |
+          docker run --rm -i hadolint/hadolint < Dockerfile > hadolint_results.json || true
+      - name: Push Linting to DefectDojo
+        run: |
+          curl -X POST "http://localhost:8080/api/v2/import-scan/" \
+          -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+          -F "scan_date=$(date +%Y-%m-%d)" \
+          -F "scan_type=Hadolint Dockerfile check" \
+          -F "engagement=1" \
+          -F "file=@hadolint_results.json"
+
+  # STAGE 4: Software Supply Chain Security (SCA & SBOM)
+  software-supply-chain:
+    name: "SCA and SBOM Analysis"
+    runs-on: self-hosted
+    needs: infra-lint
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+      - name: Generate CycloneDX SBOM
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" aquasec/trivy fs --format cyclonedx --output /src/cyclonedx_results.json /src
+      - name: Push CycloneDX SBOM to DefectDojo
+        run: |
+          curl -X POST "http://localhost:8080/api/v2/import-scan/" \
+          -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+          -F "scan_date=$(date +%Y-%m-%d)" \
+          -F "scan_type=CycloneDX Scan" \
+          -F "engagement=1" \
+          -F "file=@cyclonedx_results.json"
+      - name: Run OWASP Dependency-Check
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" owasp/dependency-check:latest --scan /src --format JSON --out /src/dependency_check_results.json --project "DVWA" || true
+      - name: Push Dependency-Check to DefectDojo
+        run: |
+          curl -X POST "http://localhost:8080/api/v2/import-scan/" \
+          -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+          -F "scan_date=$(date +%Y-%m-%d)" \
+          -F "scan_type=Dependency Check Scan" \
+          -F "engagement=1" \
+          -F "file=@dependency_check_results.json"
+
+  # STAGE 5: Container Dependency Scan
   container-security:
     name: "Trivy Supply Chain Scan"
     runs-on: self-hosted
-    needs: static-analysis
+    needs: software-supply-chain
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
