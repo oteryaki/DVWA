@@ -88,7 +88,7 @@ jobs:
 
       - name: Run OWASP Dependency-Check
         run: |
-          docker run --rm -v "${{ github.workspace }}:/src" -v odc-db-cache:/usr/share/dependency-check/data owasp/dependency-check:latest --scan /src --format JSON --out /src --project "DVWA" || true
+          docker run --rm -v "${{ github.workspace }}:/src" -v odc-db-cache:/usr/share/dependency-check/data owasp/dependency-check:latest --scan /src --format JSON --out /src/dependency_check_results.json --project "DVWA" || true
 
       - name: Push Dependency-Check to DefectDojo
         run: |
@@ -97,7 +97,7 @@ jobs:
           -F "scan_date=$(date +%Y-%m-%d)" \
           -F "scan_type=Dependency Check Scan" \
           -F "engagement=1" \
-          -F "file=@dependency-check-report.json"
+          -F "file=@dependency_check_results.json"
 
   # STAGE 5: Container Dependency Scan
   container-security:
