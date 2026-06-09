@@ -72,12 +72,9 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-
-      # 1. Generate CycloneDX Inventory List
       - name: Generate CycloneDX SBOM
         run: |
           docker run --rm -v "${{ github.workspace }}:/src" aquasec/trivy fs --format cyclonedx --output /src/cyclonedx_results.json /src
-
       - name: Push CycloneDX SBOM to DefectDojo
         run: |
           curl -X POST "http://localhost:8080/api/v2/import-scan/" \
@@ -86,12 +83,9 @@ jobs:
           -F "scan_type=CycloneDX Scan" \
           -F "engagement=1" \
           -F "file=@cyclonedx_results.json"
-
-      # 2. Scan the code dependencies for CVE flaws (Replaces Dependency-Check)
       - name: Run Trivy Filesystem SCA Scan
         run: |
           docker run --rm -v "${{ github.workspace }}:/src" aquasec/trivy fs --format json --output /src/trivy_fs_results.json /src
-
       - name: Push Filesystem SCA to DefectDojo
         run: |
           curl -X POST "http://localhost:8080/api/v2/import-scan/" \
@@ -122,3 +116,41 @@ jobs:
           -F "scan_type=Trivy Scan" \
           -F "engagement=1" \
           -F "file=@trivy_results.json"
+
+  # STAGE 6: Dynamic Application Security Testing (DAST)
+  dynamic-analysis:
+    name: "OWASP ZAP DAST Scan"
+    runs-on: self-hosted
+    needs: container-security
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # 1. Spin up the app container built in stage 5 to run locally on port 8081
+      - name: Start DVWA Container for Testing
+        run: |
+          docker run -d --name dvwa-test -p 8081:80 dvwa-local:${{ github.sha }}
+          echo "Waiting 15 seconds for DVWA web server to initialize..."
+          sleep 15
+
+      # 2. Attack the local web server using the official OWASP ZAP Baseline script
+      - name: Run OWASP ZAP Scanner
+        run: |
+          docker run --rm --network="host" -v "${{ github.workspace }}:/zap/wrk/:rw" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://localhost:8081 -J zap_results.json || true
+
+      # 3. Terminate and remove the test container to keep the host machine clean
+      - name: Stop DVWA Container
+        if: always()
+        run: |
+          docker stop dvwa-test || true
+          docker rm dvwa-test || true
+
+      # 4. Ingest the vulnerability report directly into DefectDojo
+      - name: Push ZAP DAST to DefectDojo
+        run: |
+          curl -X POST "http://localhost:8080/api/v2/import-scan/" \
+          -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+          -F "scan_date=$(date +%Y-%m-%d)" \
+          -F "scan_type=ZAP Scan" \
+          -F "engagement=1" \
+          -F "file=@zap_results.json"
