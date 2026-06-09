@@ -64,7 +64,7 @@ jobs:
           -F "engagement=1" \
           -F "file=@hadolint_results.json"
 
-# STAGE 4: Software Supply Chain Security (SCA & SBOM)
+  # STAGE 4: Software Supply Chain Security (SCA & SBOM)
   software-supply-chain:
     name: "SCA and SBOM Analysis"
     runs-on: self-hosted
@@ -88,7 +88,16 @@ jobs:
 
       - name: Run OWASP Dependency-Check
         run: |
-          docker run --rm -v "${{ github.workspace }}:/src" -v odc-db-cache:/usr/share/dependency-check/data owasp/dependency-check:latest --scan /src --format JSON --out /src/dependency_check_results.json --project "DVWA" || true
+          # Removed '|| true' so we can catch any underlying tool crashes directly in the logs
+          docker run --rm -v "${{ github.workspace }}:/src" -v odc-db-cache:/usr/share/dependency-check/data owasp/dependency-check:latest --scan /src --format JSON --out /src --project "DVWA"
+
+      - name: Debug - Find the File
+        if: always() # Forces this step to execute even if Dependency-Check crashes
+        run: |
+          echo "=== LISTING ALL FILES IN WORKSPACE ==="
+          ls -la
+          echo "=== SEARCHING FOR ANY JSON REPORTS ==="
+          find . -name "*.json"
 
       - name: Push Dependency-Check to DefectDojo
         run: |
@@ -97,7 +106,7 @@ jobs:
           -F "scan_date=$(date +%Y-%m-%d)" \
           -F "scan_type=Dependency Check Scan" \
           -F "engagement=1" \
-          -F "file=@dependency_check_results.json"
+          -F "file=@dependency-check-report.json"
 
   # STAGE 5: Container Dependency Scan
   container-security:
