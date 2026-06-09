@@ -73,6 +73,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
 
+      # 1. Generate CycloneDX Inventory List
       - name: Generate CycloneDX SBOM
         run: |
           docker run --rm -v "${{ github.workspace }}:/src" aquasec/trivy fs --format cyclonedx --output /src/cyclonedx_results.json /src
@@ -86,27 +87,19 @@ jobs:
           -F "engagement=1" \
           -F "file=@cyclonedx_results.json"
 
-      - name: Run OWASP Dependency-Check
+      # 2. Scan the code dependencies for CVE flaws (Replaces Dependency-Check)
+      - name: Run Trivy Filesystem SCA Scan
         run: |
-          # Removed '|| true' so we can catch any underlying tool crashes directly in the logs
-          docker run --rm -v "${{ github.workspace }}:/src" -v odc-db-cache:/usr/share/dependency-check/data owasp/dependency-check:latest --scan /src --format JSON --out /src --project "DVWA"
+          docker run --rm -v "${{ github.workspace }}:/src" aquasec/trivy fs --format json --output /src/trivy_fs_results.json /src
 
-      - name: Debug - Find the File
-        if: always() # Forces this step to execute even if Dependency-Check crashes
-        run: |
-          echo "=== LISTING ALL FILES IN WORKSPACE ==="
-          ls -la
-          echo "=== SEARCHING FOR ANY JSON REPORTS ==="
-          find . -name "*.json"
-
-      - name: Push Dependency-Check to DefectDojo
+      - name: Push Filesystem SCA to DefectDojo
         run: |
           curl -X POST "http://localhost:8080/api/v2/import-scan/" \
           -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
           -F "scan_date=$(date +%Y-%m-%d)" \
-          -F "scan_type=Dependency Check Scan" \
+          -F "scan_type=Trivy Scan" \
           -F "engagement=1" \
-          -F "file=@dependency-check-report.json"
+          -F "file=@trivy_fs_results.json"
 
   # STAGE 5: Container Dependency Scan
   container-security:
