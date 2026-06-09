@@ -1,0 +1,42 @@
+name: "Corporate Security Guardrail"
+on:
+  push:
+    branches: [ "main", "master" ]
+jobs:
+  static-analysis:
+    name: "Semgrep Code Scan"
+    runs-on: self-hosted
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+      - name: Run Semgrep Scan
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" returntocorp/semgrep semgrep scan --config=p/php --json -o semgrep_results.json || true
+      - name: Push SAST to DefectDojo
+        run: |
+          curl -X POST "http://localhost:8080/api/v2/import-scan/" \
+          -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+          -F "scan_date=$(date +%Y-%m-%d)" \
+          -F "scan_type=Semgrep JSON Report" \
+          -F "engagement=1" \
+          -F "file=@semgrep_results.json"
+  container-security:
+    name: "Trivy Supply Chain Scan"
+    runs-on: self-hosted
+    needs: static-analysis
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+      - name: Build Application Container
+        run: docker build -t dvwa-local:${{ github.sha }} .
+      - name: Run Trivy Image Scan
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image --format json --output trivy_results.json dvwa-local:${{ github.sha }} || true
+      - name: Push Container Scan to DefectDojo
+        run: |
+          curl -X POST "http://localhost:8080/api/v2/import-scan/" \
+          -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+          -F "scan_date=$(date +%Y-%m-%d)" \
+          -F "scan_type=Trivy Scan" \
+          -F "engagement=1" \
+          -F "file=@trivy_results.json"
